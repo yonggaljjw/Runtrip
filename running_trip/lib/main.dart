@@ -38,6 +38,12 @@ class _HomePageState extends State<HomePage> {
   int _selectedCityIndex = 0;
   int _currentIndex = 0;
 
+  // 🔹 로그인 상태 관련
+  String? _token;
+  Map<String, dynamic>? _currentUser;
+
+  bool get _isLoggedIn => _token != null;
+
   @override
   Widget build(BuildContext context) {
     const navy = Color(0xFF102440);
@@ -104,48 +110,81 @@ class _HomePageState extends State<HomePage> {
 
                   const SizedBox(height: 12),
 
-                  // 로그인 / 회원가입 버튼
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const LoginPage(),
-                            ),
-                          );
-                        },
-                        child: const Text(
-                          '로그인',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: navy,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const SignupPage(),
-                            ),
-                          );
-                        },
-                        child: const Text(
-                          '회원가입',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: navy,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  // 🔹 로그인 전: 로그인/회원가입 버튼
+                  //    로그인 후: 환영 문구
+                  if (!_isLoggedIn) ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () async {
+                            final result = await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const LoginPage(),
+                              ),
+                            );
 
-                  const SizedBox(height: 12),
+                            if (result != null &&
+                                result is Map<String, dynamic>) {
+                              setState(() {
+                                _token = result['token'] as String?;
+                                _currentUser = result['user']
+                                    as Map<String, dynamic>?;
+                              });
+
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '${_currentUser?['nickname'] ?? '러너'}님, 환영합니다!',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          child: const Text(
+                            '로그인',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: navy,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const SignupPage(),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            '회원가입',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: navy,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ] else ...[
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '${_currentUser?['nickname'] ?? '러너'}님, 환영합니다 👋',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: navy,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
 
                   // 선택된 도시 화면
                   Container(
@@ -257,7 +296,28 @@ class _HomePageState extends State<HomePage> {
           child: BottomNavigationBar(
             type: BottomNavigationBarType.fixed,
             currentIndex: _currentIndex,
-            onTap: (index) => setState(() => _currentIndex = index),
+            onTap: (index) {
+              setState(() => _currentIndex = index);
+
+              // 🔹 "내 정보" 탭 클릭 시
+              if (index == 3) {
+                if (!_isLoggedIn) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('내 정보를 보려면 먼저 로그인 해주세요.'),
+                    ),
+                  );
+                } else {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MyInfoPage(
+                        user: _currentUser!,
+                      ),
+                    ),
+                  );
+                }
+              }
+            },
             selectedFontSize: 11,
             unselectedFontSize: 11,
             backgroundColor: Colors.white,
@@ -370,7 +430,7 @@ class _SignupPageState extends State<SignupPage> {
 
   bool _isLoading = false;
 
-  // TODO: 실제 서버 주소로 변경 (예: http://192.168.0.10:5000)
+  // TODO: 실제 서버 주소로 변경 (예: http://10.20.23.111:5000)
   final String _baseUrl = 'http://127.0.0.1:5000';
 
   Future<void> _submit() async {
@@ -719,10 +779,10 @@ class _LoginPageState extends State<LoginPage> {
 
   bool _isLoading = false;
 
-  // TODO: 실제 서버 주소로 변경 (예: http://192.168.0.10:5000)
+  // TODO: 실제 서버 주소로 변경 (예: http://10.20.23.111:5000)
   final String _baseUrl = 'http://127.0.0.1:5000';
 
-  String? _token; // 나중에 SharedPreferences 등으로 확장 가능
+  String? _token; // 페이지 내부에서만 사용 (필요시)
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
@@ -742,14 +802,15 @@ class _LoginPageState extends State<LoginPage> {
       final data = jsonDecode(res.body);
 
       if (res.statusCode == 200 && data['success'] == true) {
-        _token = data['token']; // 필요하면 어디에 저장해서 재사용
+        _token = data['token'];
 
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('로그인 성공!')),
-        );
 
-        Navigator.pop(context);
+        // 🔹 로그인 성공 시, HomePage 로 토큰/유저 정보 반환
+        Navigator.pop(context, {
+          'token': data['token'],
+          'user': data['user'],
+        });
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -877,5 +938,102 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     );
+  }
+}
+
+// ----------------------------------------------------
+// 내 정보 페이지
+// ----------------------------------------------------
+class MyInfoPage extends StatelessWidget {
+  final Map<String, dynamic> user;
+
+  const MyInfoPage({super.key, required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    const navy = Color(0xFF102440);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('내 정보'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${user['nickname'] ?? ''}님의 러닝 프로필',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: navy,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _infoRow('이메일', user['email']),
+                  const Divider(),
+                  _infoRow('닉네임', user['nickname']),
+                  const Divider(),
+                  _infoRow('러닝 레벨', _convertLevel(user['running_level'])),
+                  const Divider(),
+                  _infoRow('도시', user['city']),
+                  const SizedBox(height: 24),
+                  const Text(
+                    '※ 고건우 조진원 화이팅',
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, dynamic value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              (value ?? '').toString(),
+              style: const TextStyle(
+                fontSize: 15,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _convertLevel(dynamic level) {
+    switch (level) {
+      case 'BEGINNER':
+        return '입문자';
+      case 'INTERMEDIATE':
+        return '중급자';
+      case 'ADVANCED':
+        return '상급자';
+      default:
+        return (level ?? '').toString();
+    }
   }
 }
