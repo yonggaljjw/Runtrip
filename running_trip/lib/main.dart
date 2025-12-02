@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+// ✅ 지도 표시용 패키지
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+
 void main() {
   runApp(const RunTripApp());
 }
@@ -86,7 +90,35 @@ class _HomePageState extends State<HomePage> {
                       child: Material(
                         color: navy,
                         child: InkWell(
-                          onTap: () {},
+                          onTap: () {
+                            // 선택된 도시를 광역시/특별시 이름으로 매핑
+                            final selectedCityName =
+                                _cities[_selectedCityIndex];
+                            String? ctprvn;
+
+                            switch (selectedCityName) {
+                              case '서울':
+                                ctprvn = '서울특별시';
+                                break;
+                              case '부산':
+                                ctprvn = '부산광역시';
+                                break;
+                              case '대구':
+                                ctprvn = '대구광역시';
+                                break;
+                              case '제주':
+                                ctprvn = '제주특별자치도';
+                                break;
+                            }
+
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => CourseListPage(
+                                  initialCity: ctprvn,
+                                ),
+                              ),
+                            );
+                          },
                           child: const Padding(
                             padding: EdgeInsets.symmetric(
                               horizontal: 24,
@@ -299,7 +331,16 @@ class _HomePageState extends State<HomePage> {
             onTap: (index) {
               setState(() => _currentIndex = index);
 
-              // 🔹 "내 정보" 탭 클릭 시
+              // 🔹 "코스" 탭
+              if (index == 1) {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const CourseListPage(),
+                  ),
+                );
+              }
+
+              // 🔹 "내 정보" 탭
               if (index == 3) {
                 if (!_isLoggedIn) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -430,7 +471,7 @@ class _SignupPageState extends State<SignupPage> {
 
   bool _isLoading = false;
 
-  // TODO: 실제 서버 주소로 변경 (예: http://10.20.23.111:5000)
+  // TODO: 실제 서버 주소로 변경
   final String _baseUrl = 'http://127.0.0.1:5000';
 
   Future<void> _submit() async {
@@ -686,7 +727,8 @@ class _SignupPageState extends State<SignupPage> {
                             value: _selectedDistance,
                             items: const [
                               DropdownMenuItem(value: 5, child: Text('5km')),
-                              DropdownMenuItem(value: 10, child: Text('10km')),
+                              DropdownMenuItem(
+                                  value: 10, child: Text('10km')),
                               DropdownMenuItem(
                                   value: 21, child: Text('하프(21km)')),
                               DropdownMenuItem(
@@ -779,7 +821,7 @@ class _LoginPageState extends State<LoginPage> {
 
   bool _isLoading = false;
 
-  // TODO: 실제 서버 주소로 변경 (예: http://10.20.23.111:5000)
+  // TODO: 실제 서버 주소로 변경
   final String _baseUrl = 'http://127.0.0.1:5000';
 
   String? _token; // 페이지 내부에서만 사용 (필요시)
@@ -1035,5 +1077,420 @@ class MyInfoPage extends StatelessWidget {
       default:
         return (level ?? '').toString();
     }
+  }
+}
+
+// ----------------------------------------------------
+// 코스 모델
+// ----------------------------------------------------
+class Course {
+  final int courseId;
+  final String courseName;
+  final String ctprvnName;
+  final String emndnName;
+  final int totalLength;
+  final String? geometryWkt; // WKT 그대로 저장
+
+  Course({
+    required this.courseId,
+    required this.courseName,
+    required this.ctprvnName,
+    required this.emndnName,
+    required this.totalLength,
+    this.geometryWkt,
+  });
+
+  factory Course.fromJson(Map<String, dynamic> json) {
+    return Course(
+      courseId: int.parse(json['course_id'].toString()),
+      courseName: json['course_name'] as String,
+      ctprvnName: json['ctprvn_name'] as String,
+      emndnName: json['emndn_name'] as String,
+      totalLength: int.parse(json['total_length'].toString()),
+      geometryWkt: json['geometry_wkt'] as String?,
+    );
+  }
+}
+
+// ----------------------------------------------------
+// 코스 리스트 페이지
+// ----------------------------------------------------
+class CourseListPage extends StatefulWidget {
+  final String? initialCity; // ex) "서울특별시"
+  final String? initialDistrict;
+
+  const CourseListPage({
+    super.key,
+    this.initialCity,
+    this.initialDistrict,
+  });
+
+  @override
+  State<CourseListPage> createState() => _CourseListPageState();
+}
+
+class _CourseListPageState extends State<CourseListPage> {
+  // TODO: 실제 백엔드 주소로 변경
+  final String _baseUrl = 'http://127.0.0.1:5000';
+
+  bool _isLoading = false;
+  List<Course> _courses = [];
+
+  String? _selectedCity;
+  String? _selectedDistrict;
+  int? _maxLength;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedCity = widget.initialCity;
+    _selectedDistrict = widget.initialDistrict;
+    _fetchCourses();
+  }
+
+  Future<void> _fetchCourses() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final queryParams = <String, String>{};
+
+      if (_selectedCity != null && _selectedCity!.isNotEmpty) {
+        queryParams['city'] = _selectedCity!;
+      }
+      if (_selectedDistrict != null && _selectedDistrict!.isNotEmpty) {
+        queryParams['district'] = _selectedDistrict!;
+      }
+      if (_maxLength != null) {
+        queryParams['max_length'] = _maxLength.toString();
+      }
+
+      final uri =
+          Uri.parse('$_baseUrl/courses').replace(queryParameters: queryParams);
+
+      final res = await http.get(uri);
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        if (decoded['success'] == true) {
+          final List list = decoded['courses'] as List;
+          setState(() {
+            _courses = list.map((e) => Course.fromJson(e)).toList();
+          });
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(decoded['message'] ?? '코스를 불러오지 못했습니다.'),
+            ),
+          );
+        }
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('에러 코드: ${res.statusCode}')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('서버에 연결할 수 없습니다.')),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const navy = Color(0xFF102440);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('코스 찾기'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // 🔹 필터 영역
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedCity,
+                      hint: const Text('도시'),
+                      items: const [
+                        DropdownMenuItem(
+                            value: '서울특별시', child: Text('서울')),
+                        DropdownMenuItem(
+                            value: '부산광역시', child: Text('부산')),
+                        DropdownMenuItem(
+                            value: '대구광역시', child: Text('대구')),
+                        DropdownMenuItem(
+                            value: '제주특별자치도', child: Text('제주')),
+                      ],
+                      onChanged: (v) {
+                        setState(() => _selectedCity = v);
+                        _fetchCourses();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      decoration: const InputDecoration(
+                        hintText: '동/구 이름 (선택)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onFieldSubmitted: (value) {
+                        _selectedDistrict =
+                            value.trim().isEmpty ? null : value.trim();
+                        _fetchCourses();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _courses.isEmpty
+                      ? const Center(child: Text('조건에 맞는 코스가 없습니다.'))
+                      : ListView.separated(
+                          padding:
+                              const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          itemCount: _courses.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final c = _courses[index];
+                            final km =
+                                (c.totalLength / 1000).toStringAsFixed(1);
+
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color:
+                                        Colors.black.withOpacity(0.04),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: ListTile(
+                                title: Text(
+                                  c.courseName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '${c.ctprvnName} ${c.emndnName}\n약 ${km}km',
+                                ),
+                                isThreeLine: true,
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          CourseDetailPage(course: c),
+                                    ),
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: navy,
+        onPressed: _fetchCourses,
+        child: const Icon(Icons.refresh_rounded),
+      ),
+    );
+  }
+}
+
+// ----------------------------------------------------
+// 코스 상세 페이지 (지도 + WKT)
+// ----------------------------------------------------
+class CourseDetailPage extends StatelessWidget {
+  final Course course;
+
+  const CourseDetailPage({super.key, required this.course});
+
+  // "LINESTRING(lat lon,lat lon,...)" -> List<LatLng>
+  List<LatLng> _parseLinestringWKT(String? wkt) {
+    if (wkt == null || wkt.isEmpty) return [];
+
+    final start = wkt.indexOf('(');
+    final end = wkt.lastIndexOf(')');
+    if (start == -1 || end == -1 || end <= start + 1) return [];
+
+    final body = wkt.substring(start + 1, end);
+    final segments = body.split(',');
+
+    final points = <LatLng>[];
+    for (final seg in segments) {
+      final parts = seg.trim().split(RegExp(r'\s+'));
+      if (parts.length < 2) continue;
+
+      final lat = double.tryParse(parts[0]);
+      final lon = double.tryParse(parts[1]);
+      if (lat == null || lon == null) continue;
+
+      points.add(LatLng(lat, lon));
+    }
+    return points;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const navy = Color(0xFF102440);
+    final km = (course.totalLength / 1000).toStringAsFixed(1);
+
+    final wkt = course.geometryWkt;
+    final linePoints = _parseLinestringWKT(wkt);
+
+    // 중심점 (없으면 서울 시청 근처)
+    LatLng center = LatLng(37.5665, 126.9780);
+    if (linePoints.isNotEmpty) {
+      center = linePoints[linePoints.length ~/ 2];
+    }
+
+    final wktPreview = (wkt == null || wkt.isEmpty)
+        ? '코스 geometry 정보가 없습니다.'
+        : wkt;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('코스 상세'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    course.courseName,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: navy,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '${course.ctprvnName} ${course.emndnName}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '총 거리 약 $km km',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // ✅ 실제 지도에 코스 라인 그리기
+                  Container(
+                    height: 260,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.06),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: FlutterMap(
+                        options: MapOptions(
+                          initialCenter: center,
+                          initialZoom: 13,
+                        ),
+                        children: [
+                          TileLayer(
+                            urlTemplate:
+                                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                            userAgentPackageName: 'com.example.runtrip',
+                          ),
+                          if (linePoints.isNotEmpty)
+                            PolylineLayer(
+                              polylines: [
+                                Polyline(
+                                  points: linePoints,
+                                  strokeWidth: 4,
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  const Text(
+                    '코스 geometry (WKT)',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(minHeight: 120),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: Text(
+                        wktPreview,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
