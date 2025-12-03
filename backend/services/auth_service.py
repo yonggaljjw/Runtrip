@@ -1,57 +1,68 @@
-import bcrypt
+# backend/services/auth_service.py
+
+import os
 import jwt
 from datetime import datetime, timedelta
-from config import Config
+from flask import current_app
+
 
 class AuthService:
     def __init__(self, user_model):
         self.user_model = user_model
 
+    def _get_secret_key(self):
+        return current_app.config.get("SECRET_KEY") or os.environ.get(
+            "SECRET_KEY", "dev-secret"
+        )
+
     def login(self, email, password):
-        # 1. 사용자 조회
-        user = self.user_model.find_by_email(email)
+        user = self.user_model.get_by_email(email)
+
         if not user:
-            return None, "이메일 또는 비밀번호가 올바르지 않습니다."
+            return None, "가입되지 않은 이메일입니다."
 
-        # 2. 비밀번호 확인
-        if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
-            return None, "이메일 또는 비밀번호가 올바르지 않습니다."
+        if not self.user_model.check_password(user, password):
+            return None, "비밀번호가 올바르지 않습니다."
 
-        # 3. 토큰 발급
+        user_id = user.get("id") or user.get("user_id")
+
         payload = {
-            "user_id": user["id"],
-            "email": user["email"],
-            "exp": datetime.utcnow() + timedelta(days=7)
+            "user_id": user_id,
+            "email": user.get("email"),
+            "nickname": user.get("nickname"),
+            # 원하면 토큰에도 넣을 수 있음
+            "running_level": user.get("running_level"),
+            "city": user.get("city"),
+            "exp": datetime.utcnow() + timedelta(days=7),
         }
-        token = jwt.encode(payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
 
-        # 4. 반환할 유저 정보 (비밀번호 제외)
-        user_info = {
-            "id": user["id"],
-            "email": user["email"],
-            "nickname": user["nickname"],
-            "running_level": user["running_level"],
-            "city": user["city"],
-        }
-        
-        return {"token": token, "user": user_info}, None
+        token = jwt.encode(payload, self._get_secret_key(), algorithm="HS256")
 
+        # 🔹 프론트에 내려줄 user 정보에 running_level, city 포함
+        return {
+            "token": token,
+            "user": {
+                "id": user_id,
+                "email": user.get("email"),
+                "nickname": user.get("nickname"),
+                "running_level": user.get("running_level"),
+                "city": user.get("city"),
+            },
+        }, None
+
+    # 회원가입
     def signup(self, data):
         email = data.get("email")
         password = data.get("password")
         nickname = data.get("nickname")
 
-        if not email or not password or not nickname:
-            return False, "이메일, 비밀번호, 닉네임은 필수입니다."
+        if not email or not password:
+            return False, "이메일과 비밀번호는 필수입니다."
 
-        # 중복 확인
-        if self.user_model.check_email_exists(email):
+        if self.user_model.get_by_email(email):
             return False, "이미 가입된 이메일입니다."
 
-        # 비밀번호 해시
-        password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        data['password_hash'] = password_hash
+        if not self.user_model.create_user(email, password, nickname):
+            return False, "회원가입 중 오류가 발생했습니다."
 
-        # DB 저장
-        self.user_model.create_user(data)
-        return True, "회원가입 완료"
+        return True, "회원가입이 완료되었습니다."

@@ -48,6 +48,52 @@ class _HomePageState extends State<HomePage> {
 
   bool get _isLoggedIn => _token != null;
 
+  // 🔹 코스 리스트로 이동 (로그인 안 되어 있으면 로그인부터)
+  Future<void> _navigateToCourses({String? ctprvn}) async {
+    if (!_isLoggedIn) {
+      // 로그인 안내
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('코스를 보려면 먼저 로그인 해주세요.')),
+      );
+
+      final result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const LoginPage(),
+        ),
+      );
+
+      if (result != null && result is Map<String, dynamic>) {
+        setState(() {
+          _token = result['token'] as String?;
+          _currentUser = result['user'] as Map<String, dynamic>?;
+        });
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${_currentUser?['nickname'] ?? '러너'}님, 환영합니다!',
+            ),
+          ),
+        );
+      } else {
+        // 로그인 실패/취소 시 그냥 종료
+        return;
+      }
+    }
+
+    // 여기 도달했다 = 로그인 완료 상태
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseListPage(
+          initialCity: ctprvn,
+          token: _token,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const navy = Color(0xFF102440);
@@ -90,7 +136,7 @@ class _HomePageState extends State<HomePage> {
                       child: Material(
                         color: navy,
                         child: InkWell(
-                          onTap: () {
+                          onTap: () async {
                             // 선택된 도시를 광역시/특별시 이름으로 매핑
                             final selectedCityName =
                                 _cities[_selectedCityIndex];
@@ -111,13 +157,7 @@ class _HomePageState extends State<HomePage> {
                                 break;
                             }
 
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => CourseListPage(
-                                  initialCity: ctprvn,
-                                ),
-                              ),
-                            );
+                            await _navigateToCourses(ctprvn: ctprvn);
                           },
                           child: const Padding(
                             padding: EdgeInsets.symmetric(
@@ -328,16 +368,12 @@ class _HomePageState extends State<HomePage> {
           child: BottomNavigationBar(
             type: BottomNavigationBarType.fixed,
             currentIndex: _currentIndex,
-            onTap: (index) {
+            onTap: (index) async {
               setState(() => _currentIndex = index);
 
               // 🔹 "코스" 탭
               if (index == 1) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const CourseListPage(),
-                  ),
-                );
+                await _navigateToCourses();
               }
 
               // 🔹 "내 정보" 탭
@@ -1118,11 +1154,13 @@ class Course {
 class CourseListPage extends StatefulWidget {
   final String? initialCity; // ex) "서울특별시"
   final String? initialDistrict;
+  final String? token;       // 🔹 JWT 토큰
 
   const CourseListPage({
     super.key,
     this.initialCity,
     this.initialDistrict,
+    this.token,
   });
 
   @override
@@ -1167,7 +1205,16 @@ class _CourseListPageState extends State<CourseListPage> {
       final uri =
           Uri.parse('$_baseUrl/courses').replace(queryParameters: queryParams);
 
-      final res = await http.get(uri);
+      // 🔹 Authorization 헤더 추가 (로그인한 사용자만 사용 가능)
+      final headers = <String, String>{};
+      if (widget.token != null && widget.token!.isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${widget.token}';
+      }
+
+      final res = await http.get(
+        uri,
+        headers: headers.isEmpty ? null : headers,
+      );
 
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body) as Map<String, dynamic>;
@@ -1184,6 +1231,13 @@ class _CourseListPageState extends State<CourseListPage> {
             ),
           );
         }
+      } else if (res.statusCode == 401) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('로그인이 필요합니다. 다시 로그인 해주세요.'),
+          ),
+        );
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(

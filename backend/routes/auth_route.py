@@ -1,3 +1,5 @@
+# backend/routes/auth_route.py
+
 from flask import Blueprint, request, jsonify
 from database import Database
 from models.user_model import UserModel
@@ -5,11 +7,13 @@ from services.auth_service import AuthService
 
 auth_bp = Blueprint('auth', __name__)
 
-# 의존성 주입
 db = Database()
 user_model = UserModel(db)
 auth_service = AuthService(user_model)
 
+# -------------------------
+# 로그인
+# -------------------------
 @auth_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -31,6 +35,9 @@ def login():
         "user": result["user"]
     }), 200
 
+# -------------------------
+# 회원가입
+# -------------------------
 @auth_bp.route("/signup", methods=["POST"])
 def signup():
     data = request.get_json()

@@ -2,13 +2,22 @@
 
 from flask import Blueprint, request, jsonify
 from database import Database
+from utils.auth_utils import token_required   # ✅ 여기 추가
 
 course_bp = Blueprint("course", __name__)
 db = Database()
 
 @course_bp.route("/courses", methods=["GET"])
-def get_courses():
-    city = request.args.get("city")       # 예: '서울특별시'
+@token_required   # ✅ 토큰 필수
+def get_courses(current_user):
+    """
+    현재 로그인한 사용자만 코스 목록을 볼 수 있게 하는 엔드포인트.
+    current_user 는 JWT payload (예: {"user_id": 1, "email": "..."} )
+    """
+    # 필요하면 user_id 써서 사용자별 추천 같은 것도 가능
+    # user_id = current_user.get("user_id")
+
+    city = request.args.get("city")          # 예: '서울특별시'
     district = request.args.get("district")  # 예: '양천구'
 
     conn = db.get_connection()
@@ -23,7 +32,7 @@ def get_courses():
                 emndn_name,
                 total_length,
                 ST_AsText(geometry_wkt) AS geometry_wkt
-            FROM running_course
+            FROM running_course2
             WHERE 1=1
         """
         params = []
